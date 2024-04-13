@@ -51,7 +51,7 @@ class Visualizer:
         self.last_autorun = datetime.now()
         self.update_count = 0
 
-        threading.Thread(target=self._thread_poll_input).start()
+        #threading.Thread(target=self._thread_poll_input).start()
 
     def update(self, force_render=False):
         should_rerender = self._process_input_queue()
@@ -193,6 +193,8 @@ class Visualizer:
         self.commands.append((tag, cmd))
 
     def _process_input_queue(self):
+        self._sync_poll_input()
+
         had_input = False
         while not self.input_queue.empty():
             input = self.input_queue.get_nowait()
@@ -242,9 +244,16 @@ class Visualizer:
                 self.cleanup()
         return had_input
 
+    def _sync_poll_input(self):
+        input = self.scr.getch()
+        self.input_queue.put(input)
+
     def _thread_poll_input(self):
         while self.running:
             if self.scr:
+                # TODO: This causes a minor race condition, since getch() implicitly
+                # refreshes the window
+                # https://stackoverflow.com/questions/19748685/curses-library-why-does-getch-clear-my-screen
                 input = self.scr.getch()
                 self.input_queue.put(input)
 
@@ -416,7 +425,7 @@ class Visualizer:
         """
         curses.curs_set(0)
         self.scr = scr
-        curses.halfdelay(4)
+        curses.halfdelay(2)
         self._init_colors()
         self.scr.clear()
 

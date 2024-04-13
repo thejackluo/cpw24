@@ -5,6 +5,7 @@ from controller import Controller
 import threading
 import asyncio
 import traceback
+import queue
 from datetime import datetime
 
 # Delay between automatic updates in seconds
@@ -39,21 +40,41 @@ ASCII_BOTS = ["""
  d  b
     """]
 
-
 class Visualizer:
     def __init__(self):
+        self.running = True
         self.scr = None  # Screen
-        self.loop = asyncio.new_event_loop()
+        self.input_queue = queue.Queue()
         self.commands = []
         self.command_idx = 0
         self.autorun = True
         self.last_autorun = datetime.now()
+        self.update_count = 0
 
-        threading.Thread(target=self.loop.run_forever).start()
-        self._update()
+        #threading.Thread(target=self._thread_poll_input).start()
+
+    def update(self, force_render=False):
+        should_rerender = self._process_input_queue()
+
+        if (self.autorun and
+            (datetime.now() - self.last_autorun).total_seconds() >= AUTORUN_DELAY and
+            self.command_idx < len(self.commands) - 1):
+            self.last_autorun = datetime.now()
+            self.command_idx += 1
+            should_rerender = True
+
+        if should_rerender or self.update_count == 0 or force_render:
+            if self.commands:
+                self.commands[self.command_idx][1]()
+            else:
+                self.scr.clear()
+                self._draw_info((0, 0))
+                self.scr.refresh()
+
+        self.update_count = 1
 
     def cleanup(self):
-        self.loop.call_soon_threadsafe(self.loop.stop)
+        self.running = False
 
     def run(self, callback):
         """
@@ -71,12 +92,15 @@ class Visualizer:
         Clear the terminal screen
         """
         self._submit_command(lambda: self.scr.clear(), "clear")
+        self.update(True)
 
     def render_game(self, state, tag):
         self._submit_command(lambda: self._render_game_internal(state), tag)
+        self.update(True)
 
     def render_error(self, error):
         self._submit_command(lambda: self._render_error_internal(error), "error")
+        self.update(True)
 
     def _render_game_internal(self, state):
         """
@@ -165,17 +189,27 @@ class Visualizer:
         # Reset if no tag was found
         self.command_idx = og_idx
 
-    def _update(self):
-        if self.scr:
-            input = self.scr.getch()
+    def _submit_command(self, cmd, tag):
+        self.commands.append((tag, cmd))
+
+    def _process_input_queue(self):
+        self._sync_poll_input()
+
+        had_input = False
+        while not self.input_queue.empty():
+            input = self.input_queue.get_nowait()
 
             if self.command_idx > 0 and input == 97:  # a
                 self.command_idx -= 1
+                had_input = True
             elif self.command_idx < len(self.commands) - 1 and input == 100:  # d
                 self.command_idx += 1
+                had_input = True
             elif input == 32:  # space
                 self.autorun = not self.autorun
+                had_input = True
             elif input == 115 and self.commands:  # s
+                had_input = True
                 # Seek to start of game which means 1 start tag if we are in the middle
                 # or zero if we are at the start
                 self._seek(
@@ -184,6 +218,7 @@ class Visualizer:
                     False
                 )
             elif input == 101 and self.commands:  # e
+                had_input = True
                 # Seek to end of game which means 1 end tag if we are in the middle
                 # or zero if we are at the end
                 self._seek(
@@ -192,8 +227,10 @@ class Visualizer:
                     True
                 )
             elif input == 110:  # n
+                had_input = True
                 self._seek("begin", 1, True)
             elif input == 112 and self.commands:  # p
+                had_input = True
                 # Seek back to previous game, which means passing over 2 begin tags
                 # if we are in the middle of a game or 1 if we are exactly at the
                 # start
@@ -202,37 +239,23 @@ class Visualizer:
                     1 if self.commands[self.command_idx][0] == "begin" else 2,
                     False
                 )
+            elif input == 113:  # q
+                had_input = True
+                self.cleanup()
+        return had_input
 
-            if (self.autorun and
-                (datetime.now() - self.last_autorun).seconds >= AUTORUN_DELAY and
-                self.command_idx < len(self.commands) - 1):
-                self.command_idx += 1
+    def _sync_poll_input(self):
+        input = self.scr.getch()
+        self.input_queue.put(input)
 
-            if self.commands:
-                self.commands[self.command_idx][1]()
-            else:
-                self.scr.clear()
-                self._draw_info((0, 0))
-                self.scr.refresh()
-
-        self._run_task(self._update)
-
-    def _submit_command(self, cmd, tag):
-        def add():
-            self.commands.append((tag, cmd))
-        self._run_task(add)
-
-    def _run_task(self, task, delay=False, *args):
-        async def run_coro():
-            if delay:
-                await asyncio.sleep(AUTORUN_DELAY)
-            try:
-                task(*args)
-            except Exception as e:
-                print("Error running task!")
-                print(traceback.format_exc())
-                
-        asyncio.run_coroutine_threadsafe(run_coro(), self.loop)
+    def _thread_poll_input(self):
+        while self.running:
+            if self.scr:
+                # TODO: This causes a minor race condition, since getch() implicitly
+                # refreshes the window
+                # https://stackoverflow.com/questions/19748685/curses-library-why-does-getch-clear-my-screen
+                input = self.scr.getch()
+                self.input_queue.put(input)
 
     def _get_shield_health(self, actions, opp_actions, bot_idx):
         # Ensure bot actually shielded
@@ -354,6 +377,7 @@ class Visualizer:
       N   - Seek to next game
       S   - Seek to start of current game
       E   - Seek to end of current game
+      Q   - Safely quit program
         """
         self._draw_multiline_text(pos, info_text)
 
@@ -401,7 +425,7 @@ class Visualizer:
         """
         curses.curs_set(0)
         self.scr = scr
-        curses.halfdelay(4)
+        curses.halfdelay(2)
         self._init_colors()
         self.scr.clear()
 
@@ -415,8 +439,9 @@ class Visualizer:
 if __name__ == "__main__":
     vis = Visualizer()
 
+    # WARNING! THIS IS DEBUG CODE! THE ACTUAL CODE IS IN client/client.py
     def execute():
-        while True:
+        while vis.running:
             state = {
                 "bots": [[2, 1], [3, 2], [4, 3]],
                 "op_bots": [[5, 4], [0, 5], [2, 6]],
@@ -429,7 +454,6 @@ if __name__ == "__main__":
             }
             vis.render_game(state)
             time.sleep(0.5)
-            pass
 
     try:
         vis.run(execute)

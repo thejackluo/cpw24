@@ -20,7 +20,7 @@ visualizer = Visualizer()
 exceptions = ""
 
 async def cleanup(websocket):
-    websocket.close()
+    await websocket.close()
 
 async def begin_game(websocket, event):
     if ENABLE_PRINT:
@@ -55,6 +55,7 @@ async def consumer(websocket, message):
 
     if event["type"] == "login" and not event['success']:
         visualizer.render_error(f'The username "{Competitor.username}" is already in use. Please quit and use a different username.')
+        await asyncio.sleep(5)
         await cleanup(websocket)
     elif event['type'] == 'begin_game':
         if ENABLE_PRINT:
@@ -90,9 +91,16 @@ async def consumer_handler(websocket):
     async for message in websocket:
         await consumer(websocket, message)
 
+async def vis_updater(websocket):
+    while visualizer.running:
+        await asyncio.sleep(0.05)
+        visualizer.update()
+    await cleanup(websocket)
+
 async def handler(websocket):
     await websocket.send(json.dumps({"type": "login", "user": Competitor.username}))
 
+    asyncio.create_task(vis_updater(websocket))
     consumer_task = asyncio.create_task(consumer_handler(websocket))
     done, pending = await asyncio.wait(
         [consumer_task],
@@ -104,8 +112,12 @@ async def handler(websocket):
 async def main():
     uri = "ws://cpw.battlecode.org:8001/"
     #uri = "ws://localhost:8001/"
-    async with websockets.connect(uri, ssl=None) as websocket:
-        await handler(websocket)
+    try:
+        async with websockets.connect(uri, ssl=None) as websocket:
+            await handler(websocket)
+    except Exception as e:
+        visualizer.render_error(f'Failed to connect to server. Please quit and retry.')
+        await asyncio.sleep(5)
 
 if __name__ == "__main__":
     def execute():

@@ -19,7 +19,8 @@ def process_actions(attacker_actions, attacker_bots, target_actions, target_bots
 
         #Tempoararily add shield health to all shielded bots
         for i, action in enumerate(target_actions): 
-            if action["type"] == "shield": new_target_healths[i] += SHIELD_HEALTH
+            if action["type"] == "shield" and target_bots[i][0] > 0:
+                new_target_healths[i] += SHIELD_HEALTH
 
         errors = []
         for bot_id, action in enumerate(attacker_actions):

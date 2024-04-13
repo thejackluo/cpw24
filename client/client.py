@@ -99,7 +99,7 @@ async def vis_updater(websocket):
 
 async def handler(websocket):
     await websocket.send(json.dumps({"type": "login", "user": Competitor.username}))
-
+    print("handler")
     asyncio.create_task(vis_updater(websocket))
     consumer_task = asyncio.create_task(consumer_handler(websocket))
     done, pending = await asyncio.wait(
@@ -114,9 +114,10 @@ async def main():
     #uri = "ws://localhost:8001/"
     try:
         async with websockets.connect(uri, ssl=None) as websocket:
+            print("test")
             await handler(websocket)
     except Exception as e:
-        visualizer.render_error(f'Failed to connect to server. Please quit and retry.')
+        visualizer.render_error(str(e))
         await asyncio.sleep(5)
 
 if __name__ == "__main__":

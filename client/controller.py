@@ -103,3 +103,4 @@ class Controller:
             (list[int]): element at i corresponds to error code for bot i in previous round
         """
         return self.prev_round_errors
+
